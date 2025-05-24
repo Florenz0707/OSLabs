@@ -14,6 +14,8 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+
 void tvinit(void) {
     int i;
 
@@ -46,13 +48,13 @@ void trap(struct trapframe *tf) {
                 release(&tickslock);
             }
             /* alarm ticks */
-            if (myproc() != 0 && (tf->cs & 3) == 3)  {
+            if (myproc() != 0 && (tf->cs & 3) == 3) {
                 myproc()->current_ticks++;
                 if (myproc()->current_ticks == myproc()->alarm_ticks) {
                     myproc()->current_ticks = 0;
                     tf->esp -= 4;
-                    *(uint*)(tf->esp) = tf->eip;
-                    tf->eip = (uint)(myproc()->alarm_handler);
+                    *(uint *) (tf->esp) = tf->eip;
+                    tf->eip = (uint) (myproc()->alarm_handler);
                 }
             }
             /* alarm ticks */
@@ -89,6 +91,21 @@ void trap(struct trapframe *tf) {
                 panic("trap");
             }
             // In user space, assume process misbehaved.
+
+            char *mem = kalloc();
+            uint a = PGROUNDDOWN(rcr2());
+            if (mem != 0) {
+                memset(mem, 0, PGSIZE);
+                if (mappages(myproc()->pgdir, (void *) a, PGSIZE, V2P(mem), PTE_W | PTE_U) >= 0) {
+                    break;
+                } else {
+                    cprintf("allocuvm out of memory (2)\n");
+                    deallocuvm(myproc()->pgdir, myproc()->sz, myproc()->tf->eax);
+                    kfree(mem);
+                    return;
+                }
+            }
+
             cprintf("pid %d %s: trap %d err %d on cpu %d "
                     "eip 0x%x addr 0x%x--kill proc\n",
                     myproc()->pid, myproc()->name, tf->trapno,
